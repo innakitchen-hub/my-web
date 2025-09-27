@@ -5,41 +5,50 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# ให้สิทธิ์ push/pull GHCR
 permissions:
   contents: read
-  packages: write    # สำหรับ push เข้า GHCR
-  id-token: write    # เผื่อใช้ OIDC ในอนาคต
+  packages: write
+  id-token: write
+
+# กันงานซ้อนกันตอน push ถี่ ๆ
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: E2E (Cypress)
+    name: E2E (Cypress via Docker Compose)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Build image จาก Dockerfile ของเรา แล้วรันคอนเทนเนอร์เว็บชั่วคราว
-      - name: Build image
-        run: docker build -t my-web:test .
+      # รัน service "web" จาก docker-compose.yml
+      - name: Start web via Compose
+        run: docker compose up -d web
 
-      - name: Run web container
-        run: docker run -d --rm --name my-web -p 8080:80 my-web:test
+      # รอให้เว็บพร้อมตอบ (localhost:8080 บน GitHub runner)
+      - name: Wait for web
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080 >/dev/null; then
+              echo "web is up"; exit 0
+            fi
+            echo "waiting..."; sleep 2
+          done
+          echo "web not responding"; exit 1
 
-      # Cypress วิ่งกับ baseUrl http://localhost:8080
-      - name: Cypress run
-        uses: cypress-io/github-action@v6
-        with:
-          wait-on: 'http://localhost:8080'
-          browser: chrome
-        env:
-          CYPRESS_baseUrl: "http://localhost:8080"
+      # รันเทสต์ด้วย service "cypress" ใน compose (baseUrl=http://web)
+      - name: Run Cypress (Docker)
+        run: docker compose run --rm cypress
 
-      - name: Show docker logs if failed
+      - name: Show web logs if failed
         if: failure()
         run: docker logs my-web || true
 
-      - name: Stop web
+      - name: Stop services
         if: always()
-        run: docker rm -f my-web || true
+        run: docker compose down
 
   build_and_push:
     name: Build & Push to GHCR
@@ -80,14 +89,14 @@ jobs:
       - name: SSH deploy (docker compose pull/up)
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}       # e.g. 192.168.1.50 หรือ your.tunnel.domain
-          username: ${{ secrets.SSH_USER }}   # e.g. korakod
-          key: ${{ secrets.SSH_KEY }}         # private key (PEM)
-          port: ${{ secrets.SSH_PORT }}       # e.g. 22
+          host: ${{ secrets.SSH_HOST }}         # เช่น 192.168.x.x หรือโดเมน Tunnel
+          username: ${{ secrets.SSH_USER }}     # เช่น korakod
+          key: ${{ secrets.SSH_KEY }}           # private key (PEM)
+          port: ${{ secrets.SSH_PORT }}         # ปกติ 22
           script: |
             set -e
-            cd ${{ secrets.COMPOSE_PROJECT_DIR }}  # โฟลเดอร์บน Mac mini ที่มี docker-compose.prod.yml
-            docker login ghcr.io -u ${{ github.repository_owner }} -p ${{ secrets.GITHUB_TOKEN }}
+            cd ${{ secrets.COMPOSE_PROJECT_DIR }}      # โฟลเดอร์ที่มี docker-compose.prod.yml
+            docker login ghcr.io -u ${{ github.repository_owner }} -p ${{ secrets.GHCR_READ_TOKEN }}
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d
             docker image prune -f
