@@ -1,0 +1,23 @@
+services:
+  web:
+    build: .
+    image: my-web:latest
+    container_name: my-web
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  cypress:
+    image: cypress/included:13.13.2
+    container_name: my-web-cypress
+    working_dir: /e2e
+    depends_on:
+      - web
+    environment:
+      # ให้ Cypress ยิงเบส URL ไปที่ service "web" ใน docker network เดียวกัน
+      - CYPRESS_baseUrl=http://web
+      - CYPRESS_VIDEO=false
+    volumes:
+      - ./:/e2e
+    command: ["run", "--browser", "electron"]
+    # ถ้าจะรันเฉพาะไฟล์: ["run", "--browser", "electron", "--spec", "cypress/e2e/home.cy.js"]
