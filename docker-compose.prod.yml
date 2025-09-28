@@ -3,5 +3,5 @@ services:
     image: ghcr.io/innakitchen-hub/my-web:latest
     container_name: my-web
     ports:
-      - "8080:80"
+      - "9090:80"
     restart: unless-stopped
