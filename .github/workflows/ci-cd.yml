@@ -83,31 +83,24 @@ jobs:
     steps:
       - name: Install cloudflared
         run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cf.deb
-          sudo dpkg -i cf.deb
-          cloudflared --version
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
 
       - name: Add SSH key
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_KEY }}
 
       - name: Deploy over SSH via Cloudflare Tunnel
-        env:
-          GH_USER: ${{ github.repository_owner }}
-          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-          COMPOSE_DIR: ${{ secrets.COMPOSE_PROJECT_DIR }}
         run: |
-          set -e
-          ssh -o "ProxyCommand cloudflared access ssh --hostname ssh.innakitchen.com" \
-              -o BatchMode=yes -o StrictHostKeyChecking=no \
-              -i ~/.ssh/id_deploy \
-              korakod@ssh.innakitchen.com \
-              "cd $COMPOSE_DIR && \
-               docker login ghcr.io -u $GH_USER -p $GHCR_READ_TOKEN && \
-               docker compose -f docker-compose.prod.yml pull && \
-               docker compose -f docker-compose.prod.yml up -d && \
-               docker image prune -f"
+          ssh -o "ProxyCommand cloudflared access ssh --hostname ${{ secrets.SSH_HOST }}" \
+              -o StrictHostKeyChecking=no \
+              -p ${{ secrets.SSH_PORT }} \
+              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+              "/bin/bash -lc 'cd ${{ secrets.COMPOSE_PROJECT_DIR }} && \
+                docker login ghcr.io -u ${{ github.repository_owner }} -p ${{ secrets.GHCR_READ_TOKEN }} && \
+                docker compose -f docker-compose.prod.yml pull && \
+                docker compose -f docker-compose.prod.yml up -d && \
+                docker image prune -f'"
